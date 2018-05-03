@@ -1,0 +1,7 @@
+jsClearMessagePane - Extracted from Mozilla-0.8
+
+Original Files: commandglue.js, mailWindow.js (original code is JavaScript code)
+
+This bug is a multi-variable atomicity violation.  The involved variables are window->frames[]->location, and gAccountCentralLoaded.  When correctly executing, ->location is updated with the "Account Central" location, and then the flag, gAccountCentralLoaded is set to true to indicate that the Account Central location has been loaded.  It is possible to read the flag after the page has been loaded, but before the flag has been updated.  In this case, there is weird UI behavior because some consumers of this info read before the flag is set, and some read after the flag is set.
+
+

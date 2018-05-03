@@ -1,0 +1,93 @@
+Concurrency Bug Benchmarks - Compiled and hastily described by Brandon Lucia 2009-2012 - University of Washington
+blucia@gmail.com - http://www.cs.washington.edu/homes/blucia0a
+----------------------------------------------------------------
+Full application benchmarks
+=-----------------------------=
+
+This is a collection of buggy programs useful for evaluating concurrency debugging tools.
+There are two groups of applications - the "kernels" and the "full applications".  The 
+kernels are documented in their own README file.
+
+Each full application has at least one known bug.
+
+HTTPD
+-----
+The bug in httpd affects the logging subsystem.  Specifically, when two threads
+both execute ap_buffered_log_writer at line 1330, or so, through line 1360, or so,
+both can access a pointer to a buffer.  When both write data to be logged into the
+buffer, they can ruin one anothers' data in the buffer, producing non-ascii
+data.  The way to diagnose the buggy behavior is to run the server, use "ab" to
+send it requests (with concurrency > 1), and monitor the type of the server's access log
+using the Unix 'file' utility.  If it reports "data", the log has been corrupted, and the
+bug has manifested.  This bug is an atomicity violation.  There are many operations
+each thread must perform to log data to the log, and they should all execute atomically.
+If they don't the log is garbled.
+
+MYSQL
+-----
+The bug in mysql affects the logging system.  In log.c, the program rotates the binlog
+when it determines, on a log write, that the size of the log has exceeded the specified
+maximum size.  During rotation, the "log_type" of the log is set to "LOG_CLOSED".  If
+another thread comes along and tries to write data to the log (in insert.c, or whatever)
+its access to the database will not be logged.  The reason is that the code to write to 
+the log doesn't properly handle the case where an attempt to log is made, but the log is
+in the LOG_CLOSED state.  The writer checks, and *gives up* rather than waiting until the
+log is re-opened, and then logging the data.  This is a security failure.  To see if
+this bug manifested itself after a run, just use the mysqlbinlog tool on the binlog
+from an execution.  If the number of requests you issued doesn't match the number logged,
+then the bug manifested itself.  A good driver to generate requests for this benchmark
+is the SysBench OLTP benchmark, or mysqlbench, which is included with the server (but 
+must be modified to support concurrent accesses).  This is an atomicity problem.
+The operations that rotate the log should be atomic.  If they're not, other threads
+can attempt, and fail, to use the log while it is being rotated.
+
+PBZip2
+------
+The bug in PBZip2 is at shutdown time. The gist is that at lots of different places
+the compression (or decompression) worker threads access the mutex that protects
+a fifo queue containing data to compress or decompress.  At the end of the execution,
+when there is no more data to put into that queue, the main thread deletes the queue,
+destroys the mutex,and then joins the worker threads.  There is an ordering problem
+there -- if the threads try accessing the mutex after it is destroyed, they'll crash.
+You can think of this one as an atomicity problem, too -- the destroying of the queue
+and joining of the threads (or end of the execution) should be atomic with respect
+to the worker threads' attempts to acquire the fifo mutex.  This bug is somewhat rare,
+but one thing I've found useful to increase the likelihood of the bug is to
+put a usleep after the queueDelete() in the main thread.  That makes it more likely the
+workers will continue running and try to use the queue, and not be join()ed or exit()ed.
+
+AGet
+----
+This bug is an atomicity violation in the signal handler that handles interruptions.
+During normal execution, the downloader thread writes bytes to a file, and updates
+a counter called bwritten, that records the number of bytes written.  These operations
+are done while holding a log.  If a signal is delivered during these operations,
+the thread that handles the signal reads bwritten, to save the program's state
+before it shuts down.  However, it reads bwritten without holding the lock.  So 
+if the workers wrote bytes to the file, but not to bwritten, the signal thread 
+won't know about them.  So in that case, the number of bytes saved to the file
+is different from the number recorded by the application.  This is an atomicity 
+violation, wherein the signal handler thread violates the atomicity of the 
+file write and counter update.  One subtlety that makes experimentation hard -
+the program uses pwrite(...) which means the files size is set in advance.  So
+at the end of all executions, the file system reports that the file is the correct
+size.  However, if you look at the file, only some of the bytes have been written.
+You need to record a checkable pattern of data to the file (i.e., all zeros), and
+record the number of bytes that were correctly written to the file.  Compare that
+number to the number reported by the program, and you can tell if the bug manifested
+or not.  It's clumsy and a pain in the ass, but I used sed, and it works fine.
+
+Transmission
+------------
+This bug is an ordering bug on startup.  There is a thread that initializes a
+variable that records the available bandwidth using "tr_bandwidthNew(...)",
+called from tr_sessionInitFull().  Another thread is doing some other setup
+stuff, and it has an assertion that asserts that the available bandwidth
+variable has been initialized (in allocateBandwidth).  If allocateBandwidth's
+assertion fires before the bandwidth has been allocated, the program fails.
+This bug is really rare, because there is a usleep used by the program to give
+the init code time to run.  However, it isn't a valid method of
+synchronization, and in some rare instances it can fail.  I've included a patch
+that Jie Yu from U. Michigan (jieyu@umich) created that works nicely to cause
+the bug to trigger more often.  It adds a sleep just before the bandwidthNew
+statement, making it more likely that the assertion fires first.

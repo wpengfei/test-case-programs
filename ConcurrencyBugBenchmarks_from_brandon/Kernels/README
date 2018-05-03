@@ -1,0 +1,37 @@
+AVBugBench - Brandon Lucia 2009-2012 - University of Washington
+blucia@gmail.com - http://www.cs.washington.edu/homes/blucia0a
+----------------------------------------------------------------
+Atomicity Violation Bug Kernels
+=-----------------------------=
+
+This is a suite of bug benchmark kernels, useful for initial testing of
+concurrency bug detection tools. There are 4 multivariable atomicity violation
+kernels, and 4 single variable atomicity violation kernels.
+
+THe kernels are designed to be used for experiments with real debugging tools, 
+as well as with simulators.  The nature of each bug is documented in the code
+by special code that records when the bug manifests.  The special code is
+demarcated by an INSTRUMENT_OFF() call, followed by a NOOP( block beginning,
+followed by an INSTRUENT_ON() call.  In the block, some work in detecting
+whether or not the bug has manifested is done (for example, tracking interleaving).
+
+At the end of the program WRITE_BUGGY is called.  This function writes a 1 (or 
+more than one 1) to the file in the environment variable called BUGGYFILE if the
+bug manifested.  If the bug didn't manifest, WRITE_BUGGY writes a 0 to this file.
+
+The special bug tracking code can be ignored in simulators by telling your simulator
+to ignore code between calls to INSTRUMENT_OFF/ON.
+
+For real debugging tools, the code can be compiled away to nothing by changing
+Kernels.mk (in the top level) so that CFLAGS and CXXFLAGS includes "$(REAL)"
+instaed of "$(SIM)".  
+
+To build, just type make in the top level.  make clean after any build modifications.
+make test will run all the benchmarks.  If they are built with $(SIM) in the C/CXXFLAGS, 
+each benchmark will output whether the bug manifested to a file in their subdirectory
+called test.<kernel name>.
+
+The number of iterations and threads can be changed by modifying the programs.
+These release versions of the benchmarks are stripped down.  Many use just 2
+threads, and a very small number of iterations.  I suggest using more
+iterations and threads for real experiments.
